@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Yapper Pro</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <script src="https://meet.jit.si/external_api.js"></script>
+    <style>
+        :root {
+            --imessage-blue: linear-gradient(180deg, #00D2FF 0%, #007AFF 100%);
+            --bg-main: #ffffff; --text-dark: #000000; --text-gray: #8E8E93;
+            --bubble-received: #E9E9EB; --border: #C6C6C8;
+            --ios-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+        }
+        [data-theme="dark"] {
+            --bg-main: #000000; --text-dark: #ffffff; --text-gray: #98989D;
+            --bubble-received: #1C1C1E; --border: #38383A;
+        }
+
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; margin: 0; padding: 0; }
+        body, html { height: 100dvh; width: 100vw; font-family: var(--ios-font); background: var(--bg-main); color: var(--text-dark); overflow: hidden; }
+        
+        .view { display: none; flex-direction: column; height: 100%; width: 100%; background: var(--bg-main); position: relative; }
+        
+        /* Overlays */
+        #call-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: black; z-index: 9999; display: none; }
+        #reaction-menu { position: fixed; background: rgba(255,255,255,0.9); backdrop-filter: blur(20px); border-radius: 20px; padding: 12px; display: none; flex-direction: column; gap: 10px; z-index: 2000; box-shadow: 0 8px 30px rgba(0,0,0,0.3); transform: scale(0); transition: 0.2s; }
+        #reaction-menu.active { display: flex; transform: scale(1); }
+
+        /* UI Elements */
+        .header { padding: env(safe-area-inset-top) 20px 10px; display: flex; align-items: center; justify-content: space-between; border-bottom: 0.5px solid var(--border); min-height: 85px; background: var(--bg-main); }
+        .search-bar { width: calc(100% - 40px); margin: 15px 20px; padding: 12px; border-radius: 12px; border: none; background: var(--bubble-received); color: var(--text-dark); outline: none; }
+        
+        #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 6px; }
+        .msg-row { display: flex; width: 100%; position: relative; align-items: center; margin-bottom: 2px; }
+        .msg-row.sent { flex-direction: row-reverse; }
+        .msg { max-width: 80%; padding: 12px 18px; border-radius: 22px; font-size: 17px; position: relative; cursor: pointer; }
+        .sent .msg { background: var(--imessage-blue); color: white; border-bottom-right-radius: 4px; }
+        .received .msg { background: var(--bubble-received); color: var(--text-dark); border-bottom-left-radius: 4px; }
+
+        .pc-trigger { opacity: 0; cursor: pointer; color: var(--text-gray); padding: 5px; font-size: 18px; transition: 0.2s; }
+        .msg-row:hover .pc-trigger { opacity: 1; }
+
+        #input-area { padding: 10px 20px calc(20px + env(safe-area-inset-bottom)); display: flex; gap: 12px; border-top: 0.5px solid var(--border); background: var(--bg-main); }
+        
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .online { background: #34C759; } .offline { background: var(--text-gray); }
+
+        .blue-btn { background: #007AFF; color: white; border: none; padding: 14px; border-radius: 12px; font-weight: bold; width: 100%; cursor: pointer; }
+        .card { background: var(--bubble-received); margin: 5px 20px; padding: 12px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; }
+        .reaction-badge { position: absolute; bottom: -8px; right: 10px; background: white; border-radius: 12px; padding: 1px 5px; font-size: 12px; border: 0.5px solid #ddd; color: black; }
+    </style>
+</head>
+<body data-theme="dark">
+
+    <audio id="ringtone" loop src="https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3"></audio>
+
+    <div id="call-overlay">
+        <div id="jitsi-container" style="height: 100%; width: 100%;"></div>
+        <button onclick="endCall()" style="position:absolute; bottom:60px; left:50%; transform:translateX(-50%); background:#FF3B30; color:white; border:none; padding:18px 45px; border-radius:40px; font-weight:bold; z-index:10001;">End Call</button>
+    </div>
+
+    <div id="reaction-menu">
+        <div style="display:flex; gap:12px; font-size:24px; padding-bottom:8px; border-bottom:0.5px solid #ccc;">
+            <span onclick="applyReaction('😂')">😂</span><span onclick="applyReaction('❤️')">❤️</span><span onclick="applyReaction('😮')">😮</span><span onclick="applyReaction('😢')">😢</span><span onclick="applyReaction('😡')">😡</span>
+        </div>
+        <div id="delete-opt" style="color:#FF3B30; text-align:center; padding-top:8px; font-weight:600; cursor:pointer;" onclick="unsendMessage()">Unsend</div>
+    </div>
+
+    <div id="auth-view" class="view" style="display:flex; justify-content:center; align-items:center;">
+        <div style="width:100%; max-width:400px; padding:40px; text-align:center;">
+            <h1 id="auth-title" style="font-size:48px; margin-bottom:30px;">Yapper</h1>
+            <input type="email" id="email" class="search-bar" placeholder="Email" style="margin:0 0 10px 0; width:100%;">
+            <input type="password" id="password" class="search-bar" placeholder="Password" style="margin:0 0 20px 0; width:100%;">
+            <button onclick="handleAuth()" class="blue-btn">Log In</button>
+            <p onclick="toggleAuthMode()" id="toggle-text" style="color:#007AFF; margin-top:20px; cursor:pointer;">New? Sign Up</p>
+        </div>
+    </div>
+
+    <div id="home-view" class="view">
+        <div class="header">
+            <button onclick="toggleDarkMode()" style="background:none; border:none; font-size:24px;">🌓</button>
+            <div style="font-weight:700; font-size:26px;">Messages</div>
+            <button onclick="logout()" style="background:none; border:none; color:#FF3B30; font-size:16px;">Logout</button>
+        </div>
+        <input type="text" id="search-bar" class="search-bar" placeholder="Search nickname..." oninput="handleSearch()">
+        <div id="requests-list"></div>
+        <div id="friend-list" style="flex:1; overflow-y:auto;"></div>
+    </div>
+
+    <div id="chat-view" class="view">
+        <div class="header">
+            <button onclick="goHome()" style="background:none; border:none; color:#007AFF; font-size:18px;">‹ Back</button>
+            <div id="chat-target-name" style="font-weight:700;">...</div>
+            <div style="display:flex; gap:15px;">
+                <button onclick="startCall('voice')" style="background:none; border:none; font-size:22px;">📞</button>
+                <button onclick="startCall('video')" style="background:none; border:none; font-size:22px;">📹</button>
+            </div>
+        </div>
+        <div id="messages" onclick="closeMenu()"></div>
+        <div id="input-area">
+            <input type="text" id="msg-input" placeholder="Yapper" style="flex:1; border:none; background:var(--bubble-received); color:var(--text-dark); padding:14px 20px; border-radius:25px; outline:none;">
+            <button onclick="sendMessage()" style="background:#007AFF; color:white; border:none; width:44px; height:44px; border-radius:50%; font-weight:bold;">↑</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, query, orderBy, addDoc, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
+        import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js";
+
+        const firebaseConfig = { apiKey: "AIzaSyB98LWEjfYaG_wbkMkwo0QJ4ch8VhQO-IA", authDomain: "messengerapp-dcccc.firebaseapp.com", projectId: "messengerapp-dcccc", storageBucket: "messengerapp-dcccc.firebasestorage.app", messagingSenderId: "255835922798", appId: "1:255835922798:web:d9293fc275ae2b18fa617f" };
+        const app = initializeApp(firebaseConfig); const db = getFirestore(app); const auth = getAuth(app);
+        
+        let activeChatId = null, selectedMsgId = null, isSignUp = false, jitsiApi = null, pressTimer;
+        const ringtone = document.getElementById('ringtone');
+
+        onAuthStateChanged(auth, user => {
+            if (user) { switchView('home-view'); loadHome(); updateStatus('online'); } 
+            else { switchView('auth-view'); }
+        });
+
+        // Auth & Search Logic
+        window.handleAuth = () => {
+            const e = document.getElementById('email').value, p = document.getElementById('password').value;
+            if(isSignUp) createUserWithEmailAndPassword(auth, e, p).then(c => setDoc(doc(db, "users", c.user.uid), { nickname: e.split('@')[0], uid: c.user.uid, status: 'online' }));
+            else signInWithEmailAndPassword(auth, e, p).catch(err => alert(err.message));
+        };
+
+        window.handleSearch = () => {
+            const term = document.getElementById('search-bar').value.toLowerCase();
+            if(term.length < 2) return;
+            onSnapshot(collection(db, "users"), snap => {
+                const reqDiv = document.getElementById('requests-list');
+                snap.forEach(d => {
+                    if(d.data().nickname.toLowerCase() === term && d.id !== auth.currentUser.uid) {
+                        reqDiv.innerHTML = `<div class="card"><span>${d.data().nickname}</span><button onclick="sendRequest('${d.id}')" style="background:#007AFF; color:white; border:none; padding:5px 15px; border-radius:8px;">Add</button></div>`;
+                    }
+                });
+            });
+        };
+
+        window.sendRequest = (id) => setDoc(doc(db, "users", id, "requests", auth.currentUser.uid), { from: auth.currentUser.uid }).then(() => alert("Sent!"));
+
+        function loadHome() {
+            onSnapshot(collection(db, "users", auth.currentUser.uid, "requests"), snap => {
+                const div = document.getElementById('requests-list'); div.innerHTML = '';
+                snap.forEach(async d => {
+                    const u = (await getDoc(doc(db, "users", d.id))).data();
+                    div.innerHTML += `<div class="card"><span>${u.nickname} wants to yap</span><button onclick="acceptFriend('${d.id}')" style="background:#34C759; color:white; border:none; padding:5px 15px; border-radius:8px;">Accept</button></div>`;
+                });
+            });
+            onSnapshot(collection(db, "users", auth.currentUser.uid, "friends"), snap => {
+                const list = document.getElementById('friend-list'); list.innerHTML = '';
+                snap.forEach(d => {
+                    onSnapshot(doc(db, "users", d.id), docSnap => {
+                        const f = docSnap.data();
+                        const row = document.createElement('div');
+                        row.style = "padding:18px 20px; border-bottom:0.5px solid var(--border); cursor:pointer; display:flex; align-items:center;";
+                        row.innerHTML = `<div class="status-dot ${f.status}"></div><b>${f.nickname}</b>`;
+                        row.onclick = () => openChat(f);
+                        list.appendChild(row);
+                    });
+                });
+            });
+        }
+
+        window.acceptFriend = (id) => {
+            setDoc(doc(db, "users", auth.currentUser.uid, "friends", id), { id });
+            setDoc(doc(db, "users", id, "friends", auth.currentUser.uid), { id });
+            deleteDoc(doc(db, "users", auth.currentUser.uid, "requests", id));
+        };
+
+        // Chat & Call Logic
+        function openChat(f) {
+            activeChatId = [auth.currentUser.uid, f.uid].sort().join('_');
+            switchView('chat-view'); document.getElementById('chat-target-name').innerText = f.nickname;
+            onSnapshot(query(collection(db, "chats", activeChatId, "messages"), orderBy("timestamp", "asc")), snap => {
+                const div = document.getElementById('messages'); div.innerHTML = '';
+                snap.forEach(d => {
+                    const m = d.data(); const isSent = m.sender === auth.currentUser.uid;
+                    div.innerHTML += `<div class="msg-row ${isSent?'sent':'received'}">
+                        <div class="pc-trigger" onclick="openMenu('${d.id}', event, ${isSent})">☺</div>
+                        <div class="msg" onmousedown="handleStart('${d.id}', event, ${isSent})" ontouchstart="handleStart('${d.id}', event, ${isSent})" onmouseup="handleEnd()" ontouchend="handleEnd()">
+                            ${m.text}${m.reaction ? `<div class="reaction-badge">${m.reaction}</div>` : ''}
+                        </div></div>`;
+                });
+                div.scrollTop = div.scrollHeight;
+            });
+        }
+
+        window.startCall = (type) => {
+            ringtone.play(); document.getElementById('call-overlay').style.display = 'block';
+            jitsiApi = new JitsiMeetExternalAPI("meet.jit.si", { roomName: "Yapper_" + activeChatId, width: "100%", height: "100%", parentNode: document.querySelector('#jitsi-container'), configOverwrite: { startWithVideoMuted: type === 'voice', prejoinPageEnabled: false } });
+            jitsiApi.addEventListener('videoConferenceJoined', () => { ringtone.pause(); ringtone.currentTime = 0; });
+        };
+
+        window.endCall = () => { ringtone.pause(); if(jitsiApi) jitsiApi.dispose(); document.getElementById('call-overlay').style.display = 'none'; };
+
+        // Utils
+        window.sendMessage = () => {
+            const i = document.getElementById('msg-input');
+            if(i.value) addDoc(collection(db, "chats", activeChatId, "messages"), { text: i.value, sender: auth.currentUser.uid, timestamp: serverTimestamp() }).then(() => i.value = '');
+        };
+        window.switchView = (id) => { document.querySelectorAll('.view').forEach(v => v.style.display='none'); document.getElementById(id).style.display='flex'; };
+        window.logout = () => signOut(auth);
+        window.toggleDarkMode = () => document.body.setAttribute('data-theme', document.body.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+        window.updateStatus = (s) => auth.currentUser && updateDoc(doc(db, "users", auth.currentUser.uid), { status: s });
+        window.goHome = () => switchView('home-view');
+
+        // Menu Logic
+        window.handleStart = (id, e, isSent) => { selectedMsgId = id; pressTimer = setTimeout(() => openMenu(id, e, isSent), 500); };
+        window.handleEnd = () => clearTimeout(pressTimer);
+        window.openMenu = (id, e, isSent) => {
+            selectedMsgId = id; const m = document.getElementById('reaction-menu');
+            m.style.top = (e.clientY || (e.touches ? e.touches[0].clientY : 100)) - 90 + "px";
+            m.style.left = "40px"; m.classList.add('active');
+            document.getElementById('delete-opt').style.display = isSent ? 'block' : 'none';
+        };
+        window.closeMenu = () => document.getElementById('reaction-menu').classList.remove('active');
+        window.applyReaction = (emoji) => updateDoc(doc(db, "chats", activeChatId, "messages", selectedMsgId), { reaction: emoji }).then(closeMenu);
+        window.unsendMessage = () => deleteDoc(doc(db, "chats", activeChatId, "messages", selectedMsgId)).then(closeMenu);
+    </script>
+</body>
+</html>
